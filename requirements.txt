@@ -1,0 +1,6 @@
+PySide6
+selenium>=4.0
+requests
+python-dotenv
+pdfminer.six
+cryptography

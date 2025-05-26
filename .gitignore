@@ -1,0 +1,10 @@
+amazon_invoices_gui_qt.spec
+build
+dist
+.venv
+.env
+.env.enc
+*.db
+invoices
+.invoices
+venv
