@@ -2,17 +2,19 @@ import sys
 import os
 import base64
 import hashlib
+import threading
+import sqlite3
+import resources_rc
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QInputDialog, QAbstractItemView, QSplitter
+    QHeaderView, QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
-import sqlite3
 from cryptography.fernet import Fernet, InvalidToken
-import subprocess
-import threading
+
+import amazon_invoices_worker
 
 ENV_ENC_FILE = ".env.enc"
 
@@ -90,7 +92,8 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Amazon Invoices Downloader (Qt)")
-        self.setWindowIcon(QIcon("amazon_invoices.ico") if os.path.exists("amazon_invoices.ico") else QIcon())
+        self.setWindowIcon(QIcon(":/AmazonInvoices.ico"))
+        self.setWindowIcon(QIcon(":/AmazonInvoices.png"))
         self.resize(1024, 700)
         layout = QVBoxLayout(self)
 
@@ -222,7 +225,6 @@ class MainWindow(QWidget):
         threading.Thread(target=self.run_worker, args=(args, cryptpw), daemon=True).start()
 
     def run_worker(self, args, password):
-        # Save .env temporarily for the worker script
         env_vars = load_encrypted_env(password)
         if not env_vars:
             self.log_box.setText("Abbruch: Passwort falsch.")
@@ -231,15 +233,18 @@ class MainWindow(QWidget):
         with open(tmp_env_path, "w", encoding="utf-8") as f:
             for k, v in env_vars.items():
                 f.write(f"{k}={v}\n")
-        cmd = ["python3", "amazon_invoices_worker.py"] + args
         try:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-            for line in process.stdout:
-                self.log_box.setText(line.strip())
-            process.wait()
+            browser = '--browser' in args
+            no_headless = '--no-headless' in args
+            amazon_invoices_worker.run(
+                browser=browser,
+                no_headless=no_headless,
+                log_callback=self.log_box.setText
+            )
         except Exception as e:
             self.log_box.setText(str(e))
-        os.remove(tmp_env_path)
+        if os.path.exists(tmp_env_path):
+            os.remove(tmp_env_path)
         self.log_box.setText("Download abgeschlossen.")
         self.reload_db()
 

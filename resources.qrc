@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>AmazonInvoices.ico</file>
+        <file>AmazonInvoices.png</file>
+    </qresource>
+</RCC>
