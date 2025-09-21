@@ -4,19 +4,25 @@ import base64
 import hashlib
 import threading
 import sqlite3
+import logging
 import resources_rc
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QAbstractItemView
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from cryptography.fernet import Fernet, InvalidToken
 
 import amazon_invoices_worker
 
 ENV_ENC_FILE = ".env.enc"
+
+
+class EncryptedEnvError(RuntimeError):
+    """Error raised when the encrypted environment file cannot be used."""
+
 
 def derive_key(password):
     return base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
@@ -43,52 +49,77 @@ def save_encrypted_env(values, password):
         f.write(token)
 
 def load_encrypted_env(password):
+    if not os.path.exists(ENV_ENC_FILE):
+        raise EncryptedEnvError("Verschlüsselte Konfigurationsdatei wurde nicht gefunden.")
     try:
         with open(ENV_ENC_FILE, "rb") as f:
             token = f.read()
         text = decrypt_env(token, password)
-        return dict(line.split("=", 1) for line in text.strip().splitlines())
-    except (InvalidToken, ValueError):
-        QMessageBox.critical(None, "Fehler", "Falsches Passwort oder beschädigte Datei.")
-        return None
-    except Exception as e:
-        QMessageBox.critical(None, "Fehler", str(e))
-        return None
+    except (InvalidToken, ValueError) as exc:
+        raise EncryptedEnvError("Falsches Passwort oder beschädigte Datei.") from exc
+    except OSError as exc:
+        raise EncryptedEnvError(f"Datei konnte nicht gelesen werden: {exc}") from exc
+
+    result = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "=" not in line:
+            raise EncryptedEnvError("Ungültiges Format der verschlüsselten Konfigurationsdatei.")
+        key, value = line.split("=", 1)
+        result[key] = value
+    return result
 
 def load_invoices_from_db(db_path, search_term=None):
     if not os.path.exists(db_path):
         return []
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    query = "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at FROM invoices"
-    params = ()
-    if search_term:
-        query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-        like = f"%{search_term}%"
-        params = (like, like, like)
-    query += " ORDER BY downloaded_at DESC"
-    cur.execute(query, params)
-    rows = cur.fetchall()
-    conn.close()
-    return rows
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        query = (
+            "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
+            "FROM invoices"
+        )
+        params = ()
+        if search_term:
+            query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+            like = f"%{search_term}%"
+            params = (like, like, like)
+        query += " ORDER BY downloaded_at DESC"
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+    except sqlite3.Error as exc:
+        logging.getLogger(__name__).warning("Datenbank konnte nicht geladen werden: %s", exc)
+        return []
 
 def sum_amounts_from_db(db_path, search_term=None):
     if not os.path.exists(db_path):
         return 0.0
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    query = "SELECT SUM(amount) FROM invoices"
-    params = ()
-    if search_term:
-        query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-        like = f"%{search_term}%"
-        params = (like, like, like)
-    cur.execute(query, params)
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result and result[0] else 0.0
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        query = "SELECT SUM(amount) FROM invoices"
+        params = ()
+        if search_term:
+            query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+            like = f"%{search_term}%"
+            params = (like, like, like)
+        cur.execute(query, params)
+        result = cur.fetchone()
+        conn.close()
+        return result[0] if result and result[0] else 0.0
+    except sqlite3.Error as exc:
+        logging.getLogger(__name__).warning("Summenabfrage fehlgeschlagen: %s", exc)
+        return 0.0
 
 class MainWindow(QWidget):
+    log_signal = Signal(str)
+    error_signal = Signal(str)
+    reload_signal = Signal()
+    worker_finished = Signal()
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Amazon Invoices Downloader (Qt)")
@@ -162,8 +193,20 @@ class MainWindow(QWidget):
         self.log_box.setReadOnly(True)
         layout.addWidget(self.log_box)
 
+        # Signal wiring
+        self.log_signal.connect(self.log_box.setText)
+        self.error_signal.connect(self._show_error)
+        self.reload_signal.connect(self.reload_db)
+        self.worker_finished.connect(self._on_worker_finished)
+
         # Initial DB load
         self.reload_db()
+
+    def _show_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Fehler", message)
+
+    def _on_worker_finished(self) -> None:
+        self.btn_download.setEnabled(True)
 
     def choose_dir(self):
         dir_name = QFileDialog.getExistingDirectory(self, "Verzeichnis auswählen", "")
@@ -221,32 +264,51 @@ class MainWindow(QWidget):
             args.append('--browser')
         if self.headless_cb.isChecked():
             args.append('--no-headless')
-        self.log_box.setText("Download läuft...")
+        self.btn_download.setEnabled(False)
+        self.log_signal.emit("Download läuft...")
         threading.Thread(target=self.run_worker, args=(args, cryptpw), daemon=True).start()
 
     def run_worker(self, args, password):
-        env_vars = load_encrypted_env(password)
-        if not env_vars:
-            self.log_box.setText("Abbruch: Passwort falsch.")
+        try:
+            env_vars = load_encrypted_env(password)
+        except EncryptedEnvError as exc:
+            self.log_signal.emit(f"Abbruch: {exc}")
+            self.error_signal.emit(str(exc))
+            self.worker_finished.emit()
             return
+
         tmp_env_path = ".env"
-        with open(tmp_env_path, "w", encoding="utf-8") as f:
-            for k, v in env_vars.items():
-                f.write(f"{k}={v}\n")
+        try:
+            with open(tmp_env_path, "w", encoding="utf-8") as f:
+                for k, v in env_vars.items():
+                    f.write(f"{k}={v}\n")
+        except OSError as exc:
+            self.log_signal.emit(f"Abbruch: .env konnte nicht geschrieben werden ({exc}).")
+            self.error_signal.emit("Die temporäre .env-Datei konnte nicht geschrieben werden.")
+            self.worker_finished.emit()
+            return
+
         try:
             browser = '--browser' in args
             no_headless = '--no-headless' in args
             amazon_invoices_worker.run(
                 browser=browser,
                 no_headless=no_headless,
-                log_callback=self.log_box.setText
+                log_callback=self.log_signal.emit
             )
-        except Exception as e:
-            self.log_box.setText(str(e))
-        if os.path.exists(tmp_env_path):
-            os.remove(tmp_env_path)
-        self.log_box.setText("Download abgeschlossen.")
-        self.reload_db()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Fehler beim Ausführen des Workers: %s", exc)
+            self.error_signal.emit(str(exc))
+        finally:
+            if os.path.exists(tmp_env_path):
+                try:
+                    os.remove(tmp_env_path)
+                except OSError as exc:
+                    logging.getLogger(__name__).warning("Temporäre .env konnte nicht gelöscht werden: %s", exc)
+                    self.log_signal.emit("Warnung: Temporäre .env-Datei konnte nicht gelöscht werden.")
+        self.log_signal.emit("Download abgeschlossen.")
+        self.reload_signal.emit()
+        self.worker_finished.emit()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
