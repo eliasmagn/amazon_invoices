@@ -11,7 +11,11 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from selenium.common.exceptions import ElementClickInterceptedException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -46,7 +50,7 @@ def run(
         return
 
     DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR") or "invoices")
-    DOWNLOAD_DIR.mkdir(exist_ok=True)
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     DB_PATH = Path(os.getenv("DB_PATH") or "invoices.db")
     REPORT_URL = (
         "https://www.amazon.de/b2b/aba/reports"
@@ -139,7 +143,11 @@ def run(
         }
         options.add_experimental_option("prefs", prefs)
 
-    driver = webdriver.Chrome(options=options)
+    try:
+        driver = webdriver.Chrome(options=options)
+    except WebDriverException as exc:
+        log(f"Chromedriver konnte nicht gestartet werden: {exc}")
+        return
     wait = WebDriverWait(driver, 120)
 
     def login_if_needed() -> None:
@@ -178,7 +186,11 @@ def run(
                     pass
                 else:
                     all_new_links.append(url)
-            next_btn = wait.until(EC.presence_of_element_located(next_btn_locator))
+            try:
+                next_btn = wait.until(EC.presence_of_element_located(next_btn_locator))
+            except TimeoutException:
+                log("Weiter-Schaltfläche nicht gefunden – breche ab.")
+                break
             disabled = (
                 next_btn.get_attribute("disabled") is not None
                 or next_btn.get_attribute("status") == "disabled"
@@ -188,6 +200,9 @@ def run(
                 break
             try:
                 wait.until(EC.element_to_be_clickable(next_btn_locator)).click()
+            except TimeoutException:
+                log("Weiter-Schaltfläche reagiert nicht – breche ab.")
+                break
             except ElementClickInterceptedException:
                 driver.execute_script(
                     "arguments[0].scrollIntoView({block:'center'});", next_btn
@@ -244,56 +259,71 @@ def run(
 
     def download_with_requests(conn: sqlite3.Connection, links: list[str]) -> None:
         session = requests.Session()
-        for ck in driver.get_cookies():
-            session.cookies.set(ck["name"], ck["value"], domain=ck.get("domain"))
-        user_agent = driver.execute_script("return navigator.userAgent;")
-        session.headers.update({
-            "User-Agent": user_agent,
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": REPORT_URL,
-            "Accept-Language": driver.execute_script("return navigator.language;"),
-        })
-        for url in links:
-            invoice_id = Path(url).stem
-            log(f"Download (requests): {invoice_id}")
-            resp = session.get(url, stream=True)
-            if resp.status_code != 200:
-                log(f"HTTP-{resp.status_code} bei {url}")
-                continue
-            data = io.BytesIO()
-            for chunk in resp.iter_content(8192):
-                data.write(chunk)
-            data.seek(0)
-            if not data.getvalue().startswith(b"%PDF"):
-                log(f"Kein PDF-Header – übersprungen: {url}")
-                continue
-            amount, currency, payment_ref = parse_pdf_info(data.getvalue())
-            final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
-            dest_path = DOWNLOAD_DIR / final_name
-            if dest_path.exists():
-                log(f"{final_name} existiert bereits – wird übersprungen")
+        try:
+            for ck in driver.get_cookies():
+                session.cookies.set(ck["name"], ck["value"], domain=ck.get("domain"))
+            user_agent = driver.execute_script("return navigator.userAgent;")
+            session.headers.update({
+                "User-Agent": user_agent,
+                "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+                "Referer": REPORT_URL,
+                "Accept-Language": driver.execute_script("return navigator.language;"),
+            })
+            for url in links:
+                invoice_id = Path(url).stem
+                log(f"Download (requests): {invoice_id}")
+                try:
+                    resp = session.get(url, stream=True, timeout=60)
+                except requests.RequestException as exc:
+                    log(f"Download fehlgeschlagen ({exc}) – übersprungen: {url}")
+                    continue
+                if resp.status_code != 200:
+                    log(f"HTTP-{resp.status_code} bei {url}")
+                    resp.close()
+                    continue
+                data = io.BytesIO()
+                for chunk in resp.iter_content(8192):
+                    if chunk:
+                        data.write(chunk)
+                data.seek(0)
+                resp.close()
+                if not data.getvalue().startswith(b"%PDF"):
+                    log(f"Kein PDF-Header – übersprungen: {url}")
+                    continue
+                amount, currency, payment_ref = parse_pdf_info(data.getvalue())
+                final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
+                dest_path = DOWNLOAD_DIR / final_name
+                if dest_path.exists():
+                    log(f"{final_name} existiert bereits – wird übersprungen")
+                    mark_as_downloaded(
+                        conn, invoice_id, final_name, amount, currency, payment_ref
+                    )
+                    continue
+                with open(dest_path, "wb") as f:
+                    f.write(data.getvalue())
+                log(f"Gespeichert: {dest_path.name}")
                 mark_as_downloaded(
                     conn, invoice_id, final_name, amount, currency, payment_ref
                 )
-                continue
-            with open(dest_path, "wb") as f:
-                f.write(data.getvalue())
-            log(f"Gespeichert: {dest_path.name}")
-            mark_as_downloaded(
-                conn, invoice_id, final_name, amount, currency, payment_ref
-            )
+        finally:
+            session.close()
 
     def download_with_browser(conn: sqlite3.Connection, links: list[str]) -> None:
         for url in links:
             invoice_id = Path(url).stem
             log(f"Download (Browser): {invoice_id}")
-            driver.get(url)
+            try:
+                driver.get(url)
+            except WebDriverException as exc:
+                log(f"Download im Browser fehlgeschlagen ({exc}) – übersprungen: {url}")
+                continue
             time.sleep(2)
             mark_as_downloaded(conn, invoice_id, f"{invoice_id}.pdf", None, None, None)
 
     # Main-Flow
-    conn = init_db()
+    conn: sqlite3.Connection | None = None
     try:
+        conn = init_db()
         login_if_needed()
         log("Bericht geöffnet – sammle neue Links …")
         links = collect_links_all_pages(conn)
@@ -306,6 +336,10 @@ def run(
         else:
             download_with_browser(conn, links)
     finally:
-        driver.quit()
-        conn.close()
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        if conn is not None:
+            conn.close()
         log("Worker abgeschlossen.")
