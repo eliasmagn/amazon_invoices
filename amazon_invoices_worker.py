@@ -8,6 +8,46 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from decimal import Decimal, InvalidOperation
+
+
+def _normalize_amount_string(amount_str: str) -> float | None:
+    """Normalize a localized amount string into a float value.
+
+    The helper keeps the final decimal separator and only removes thousands
+    separators that differ from the last occurring decimal symbol. This makes
+    it work for both German and English formatted totals.
+
+    >>> _normalize_amount_string("1.234,56")
+    1234.56
+    >>> _normalize_amount_string("1,234.56")
+    1234.56
+    """
+
+    cleaned = amount_str.strip()
+    if not cleaned:
+        return None
+
+    last_comma = cleaned.rfind(",")
+    last_dot = cleaned.rfind(".")
+    if last_comma == -1 and last_dot == -1:
+        decimal_sep = None
+    elif last_comma > last_dot:
+        decimal_sep = ","
+    else:
+        decimal_sep = "."
+
+    if decimal_sep is None:
+        normalized = cleaned.replace(",", "").replace(".", "")
+    else:
+        other_sep = "." if decimal_sep == "," else ","
+        normalized = cleaned.replace(other_sep, "")
+        normalized = normalized.replace(decimal_sep, ".")
+
+    try:
+        return float(Decimal(normalized))
+    except (InvalidOperation, ValueError):
+        return None
 
 import requests
 from dotenv import load_dotenv
@@ -234,10 +274,11 @@ def run(
         for pat in AMOUNT_PATTERNS:
             if m := pat.search(text):
                 amount_str = m.group(1)
-                amount_clean = amount_str.replace(".", "").replace(",", ".")
-                amount_val = round(float(amount_clean), 2)
-                currency = "EUR"
-                break
+                normalized = _normalize_amount_string(amount_str)
+                if normalized is not None:
+                    amount_val = round(normalized, 2)
+                    currency = "EUR"
+                    break
         for pat in PAYMENT_REF_PATTERNS:
             if m := pat.search(text):
                 payment_ref = m.group(1)
