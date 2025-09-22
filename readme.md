@@ -1,0 +1,70 @@
+# Amazon Invoices Downloader
+
+Amazon Invoices Downloader is a desktop application that automates the retrieval and organisation of Amazon Business invoices. A PySide6 user interface lets you manage credentials, choose download destinations, and trigger the worker that navigates the Amazon Business reports portal. Downloaded PDFs are parsed for payment information and stored alongside metadata in an SQLite database for easy lookup and reconciliation.
+
+## Features
+
+- Securely store Amazon credentials by encrypting them into an `.env.enc` file that is only decrypted during a download run.
+- Headless-friendly Selenium workflow that logs into the Amazon Business reports page and discovers newly available invoice PDFs.
+- Optional switch to use the active Selenium session cookies with `requests` for fast, reliable downloads.
+- Automatic PDF parsing to capture totals and payment references, saved to an SQLite database.
+- Qt-based table view that supports searching, sorting, and running totals over the downloaded invoices.
+
+## Requirements
+
+- Python 3.11 or newer.
+- Google Chrome or Chromium installed locally.
+- Matching ChromeDriver available on your `PATH` (Selenium launches it automatically).
+- Amazon Business account with access to the invoice reports portal.
+
+Python dependencies are listed in `requirements.txt` and include PySide6, Selenium 4, Requests, python-dotenv, pdfminer.six, and cryptography.
+
+## Installation
+
+1. (Optional) Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\\Scripts\\activate
+   ```
+2. Install project dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Ensure ChromeDriver compatible with your Chrome installation is accessible. You can manage this manually or via tools like `webdriver-manager`.
+
+## Usage
+
+1. Launch the GUI:
+   ```bash
+   python amazon_invoices_gui_qt.py
+   ```
+2. Enter your Amazon Business username and password. Choose the download directory for PDFs and the SQLite database file used for metadata.
+3. Provide an encryption password. Credentials and settings are encrypted into `.env.enc` and only decrypted into a temporary `.env` file during downloads.
+4. (Optional) Enable **Per Browser herunterladen (--browser)** to force Selenium to perform the PDF downloads directly. Enable **Browserfenster anzeigen (--no-headless)** if you need to watch the automated browser.
+5. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals and payment references, and stores metadata in the SQLite database.
+6. Use **Datenbank neu laden** or the search field to refresh and filter the table. The **Summe** label shows the total of the currently displayed invoices.
+
+The GUI deletes the temporary `.env` file when the worker finishes. Existing `invoices.db` files will be migrated automatically if an outdated schema is detected; older data is preserved by renaming the legacy table.
+
+## Data Storage
+
+- **PDF files** are saved to the configured download directory, defaulting to `invoices/`.
+- **Metadata** is stored in the configured SQLite database. The `invoices` table tracks invoice IDs, filenames, totals, currencies, payment references, and timestamps.
+- **Credentials** are stored encrypted in `.env.enc`. Never commit this file or the decrypted `.env` to version control.
+
+## Troubleshooting
+
+- Verify that ChromeDriver matches your Chrome version if Selenium fails to start.
+- Amazon may require multi-factor authentication or additional verification steps; these are not yet automated and may need manual intervention.
+- If downloads stall, try running with the visible browser option to observe potential modal dialogs or errors.
+- Use the application log line at the bottom of the GUI window to see the most recent worker status message.
+
+## Development
+
+- The GUI emits log messages and errors through Qt signals, making it easier to adapt the interface or connect additional logging sinks.
+- `amazon_invoices_worker.py` encapsulates download logic; you can run it programmatically by creating an `.env` file with the required keys (`AMZ_USER`, `AMZ_PW`, `DOWNLOAD_DIR`, `DB_PATH`) and calling `amazon_invoices_worker.run()`.
+- Future enhancements and outstanding work are tracked in `checklist.md`.
+
+## Testing
+
+There are currently no automated tests for the project. Contributions that add tests or continuous integration are welcome.
