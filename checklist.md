@@ -7,6 +7,7 @@
 - [x] Parse downloaded PDFs to capture totals and payment references for database storage.
 - [x] Display downloaded invoices in a searchable, sortable table with running total.
 - [x] Reload worker environment configuration on every run so GUI updates take effect immediately.
+- [x] Harden amount parsing with locale-aware normalization and doctest coverage for German and English formats.
 
 ## 🔄 In Progress / Planned
 - [ ] Provide packaged application binaries for Windows/macOS/Linux users.
