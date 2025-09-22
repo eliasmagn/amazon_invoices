@@ -6,6 +6,7 @@
 - [x] Automate Amazon Business invoice retrieval with Selenium and optional headless mode.
 - [x] Parse downloaded PDFs to capture totals and payment references for database storage.
 - [x] Display downloaded invoices in a searchable, sortable table with running total.
+- [x] Reload worker environment configuration on every run so GUI updates take effect immediately.
 
 ## 🔄 In Progress / Planned
 - [ ] Provide packaged application binaries for Windows/macOS/Linux users.

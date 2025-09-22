@@ -43,7 +43,7 @@ def run(
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s: %(message)s")
-    load_dotenv()
+    load_dotenv(dotenv_path=".env", override=True)
     USER, PW = os.getenv("AMZ_USER"), os.getenv("AMZ_PW")
     if not USER or not PW:
         log("Bitte AMZ_USER und AMZ_PW in der .env setzen")
