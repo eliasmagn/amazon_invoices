@@ -43,7 +43,7 @@ Python dependencies are listed in `requirements.txt` and include PySide6, Seleni
 2. Enter your Amazon Business username and password. Choose the download directory for PDFs and the SQLite database file used for metadata.
 3. Provide an encryption password. Credentials and settings are encrypted into `.env.enc` and only decrypted into a temporary `.env` file during downloads.
 4. (Optional) Enable **Per Browser herunterladen (--browser)** to force Selenium to perform the PDF downloads directly. Enable **Browserfenster anzeigen (--no-headless)** if you need to watch the automated browser.
-5. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals and payment references, and stores metadata in the SQLite database.
+5. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals and payment references, renames the PDFs with that metadata, and stores the enriched filenames and metadata in the SQLite database.
 6. Use **Datenbank neu laden** or the search field to refresh and filter the table. The **Summe** label shows the total of the currently displayed invoices.
 
 The GUI deletes the temporary `.env` file when the worker finishes. Existing `invoices.db` files will be migrated automatically if an outdated schema is detected; older data is preserved by renaming the legacy table.
@@ -74,3 +74,7 @@ Basic doctest coverage exists for the amount normalisation helper:
 ```bash
 python -m doctest amazon_invoices_worker.py
 ```
+
+### Manual regression checklist
+
+- Execute a run with **Per Browser herunterladen (--browser)** disabled to download via `requests`, note the metadata-enriched filename, then repeat the download with browser mode enabled and confirm the saved filename still includes the amount, currency, and payment reference.
