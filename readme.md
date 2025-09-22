@@ -9,6 +9,7 @@ Amazon Invoices Downloader is a desktop application that automates the retrieval
 - Optional switch to use the active Selenium session cookies with `requests` for fast, reliable downloads.
 - Automatic PDF parsing to capture totals and payment references, saved to an SQLite database.
 - Qt-based table view that supports searching, sorting, and running totals over the downloaded invoices.
+- Worker reloads environment configuration on every invocation, so updated credentials or directories entered in the GUI are used immediately.
 
 ## Requirements
 
