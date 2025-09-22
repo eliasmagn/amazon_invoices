@@ -16,3 +16,6 @@
 - [ ] Allow manual refresh of Amazon authentication cookies without a full relogin.
 - [ ] Document the database schema and provide migration tooling for future changes.
 - [ ] Add export options (CSV/Excel) for downloaded invoice metadata.
+
+## 🧪 Manual Regression Tests
+- [ ] Run a browser-mode download after a requests-mode download using the same invoice and confirm that both saved filenames include amount, currency, and payment reference metadata.

@@ -301,24 +301,84 @@ def run(
                     continue
                 with open(dest_path, "wb") as f:
                     f.write(data.getvalue())
-                log(f"Gespeichert: {dest_path.name}")
+                log(f"Gespeichert (Requests): {dest_path.name}")
                 mark_as_downloaded(
                     conn, invoice_id, final_name, amount, currency, payment_ref
                 )
         finally:
             session.close()
 
+    def _wait_for_download(invoice_id: str, before: set[str]) -> Path | None:
+        deadline = time.time() + 120
+        expected = DOWNLOAD_DIR / f"{invoice_id}.pdf"
+        while time.time() < deadline:
+            temp_path = expected.with_suffix(expected.suffix + ".crdownload")
+            if temp_path.exists():
+                time.sleep(0.5)
+                continue
+            if expected.exists() and expected.stat().st_size > 0:
+                return expected
+            current = {p.name: p for p in DOWNLOAD_DIR.iterdir() if p.is_file()}
+            new_pdf = [
+                p for name, p in current.items()
+                if name not in before and p.suffix.lower() == ".pdf" and p.stat().st_size > 0
+            ]
+            if new_pdf:
+                newest = max(new_pdf, key=lambda p: p.stat().st_mtime)
+                temp = newest.with_suffix(newest.suffix + ".crdownload")
+                if temp.exists():
+                    time.sleep(0.5)
+                    continue
+                return newest
+            time.sleep(0.5)
+        return None
+
     def download_with_browser(conn: sqlite3.Connection, links: list[str]) -> None:
         for url in links:
             invoice_id = Path(url).stem
             log(f"Download (Browser): {invoice_id}")
+            before = {p.name for p in DOWNLOAD_DIR.iterdir() if p.is_file()}
             try:
                 driver.get(url)
             except WebDriverException as exc:
                 log(f"Download im Browser fehlgeschlagen ({exc}) – übersprungen: {url}")
                 continue
-            time.sleep(2)
-            mark_as_downloaded(conn, invoice_id, f"{invoice_id}.pdf", None, None, None)
+            downloaded = _wait_for_download(invoice_id, before)
+            if downloaded is None:
+                log(f"Download im Browser für {invoice_id} nicht gefunden – übersprungen")
+                continue
+            try:
+                data = downloaded.read_bytes()
+            except OSError as exc:
+                log(f"PDF konnte nicht gelesen werden ({exc}) – übersprungen: {downloaded.name}")
+                continue
+            if not data.startswith(b"%PDF"):
+                log(f"Kein PDF-Header – übersprungen: {downloaded.name}")
+                try:
+                    downloaded.unlink()
+                except OSError:
+                    pass
+                continue
+            amount, currency, payment_ref = parse_pdf_info(data)
+            final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
+            dest_path = DOWNLOAD_DIR / final_name
+            if dest_path.exists():
+                log(f"{dest_path.name} existiert bereits – wird übersprungen")
+                try:
+                    if downloaded != dest_path:
+                        downloaded.unlink()
+                except OSError:
+                    pass
+                mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref)
+                continue
+            try:
+                if downloaded != dest_path:
+                    downloaded.rename(dest_path)
+            except OSError as exc:
+                log(f"Zieldatei konnte nicht erstellt werden ({exc}) – übersprungen: {downloaded.name}")
+                continue
+            log(f"Gespeichert (Browser): {dest_path.name}")
+            mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref)
 
     # Main-Flow
     conn: sqlite3.Connection | None = None
