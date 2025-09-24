@@ -10,6 +10,7 @@ Amazon Invoices Downloader is a desktop application that automates the retrieval
 - Automatic PDF parsing to capture totals and payment references, saved to an SQLite database.
 - Locale-aware normalization of invoice totals so German and English formatted amounts are interpreted consistently.
 - Qt-based table view that supports searching, sorting, and running totals over the downloaded invoices.
+- Reload encrypted credentials and directory settings directly within the GUI for repeated runs.
 - Worker reloads environment configuration on every invocation, so updated credentials or directories entered in the GUI are used immediately.
 
 ## Requirements
@@ -42,9 +43,10 @@ Python dependencies are listed in `requirements.txt` and include PySide6, Seleni
    ```
 2. Enter your Amazon Business username and password. Choose the download directory for PDFs and the SQLite database file used for metadata.
 3. Provide an encryption password. Credentials and settings are encrypted into `.env.enc` and only decrypted into a temporary `.env` file during downloads.
-4. (Optional) Enable **Per Browser herunterladen (--browser)** to force Selenium to perform the PDF downloads directly. Enable **Browserfenster anzeigen (--no-headless)** if you need to watch the automated browser.
-5. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals and payment references, renames the PDFs with that metadata, and stores the enriched filenames and metadata in the SQLite database.
-6. Use **Datenbank neu laden** or the search field to refresh and filter the table. The **Summe** label shows the total of the currently displayed invoices.
+4. If you already have an `.env.enc`, click **Konfiguration laden** to decrypt and prefill the stored credentials, directory, and database path. The entered password is reused for the next download run.
+5. (Optional) Enable **Per Browser herunterladen (--browser)** to force Selenium to perform the PDF downloads directly. Enable **Browserfenster anzeigen (--no-headless)** if you need to watch the automated browser.
+6. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals and payment references, renames the PDFs with that metadata, and stores the enriched filenames and metadata in the SQLite database.
+7. Use **Datenbank neu laden** or the search field to refresh and filter the table. The **Summe** label shows the total of the currently displayed invoices.
 
 The GUI deletes the temporary `.env` file when the worker finishes. Existing `invoices.db` files will be migrated automatically if an outdated schema is detected; older data is preserved by renaming the legacy table.
 

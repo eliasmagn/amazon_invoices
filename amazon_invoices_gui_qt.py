@@ -9,7 +9,7 @@ import resources_rc
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QAbstractItemView
+    QHeaderView, QMessageBox, QAbstractItemView, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
@@ -166,6 +166,10 @@ class MainWindow(QWidget):
         self.btn_download = QPushButton("Download starten")
         self.btn_download.clicked.connect(self.start_download)
         actions.addWidget(self.btn_download)
+        self.btn_load_cfg = QPushButton("Konfiguration laden")
+        self.btn_load_cfg.clicked.connect(self.load_encrypted_settings)
+        self.btn_load_cfg.setEnabled(os.path.exists(ENV_ENC_FILE))
+        actions.addWidget(self.btn_load_cfg)
         self.btn_reload = QPushButton("Datenbank neu laden")
         self.btn_reload.clicked.connect(self.reload_db)
         actions.addWidget(self.btn_reload)
@@ -223,6 +227,35 @@ class MainWindow(QWidget):
         self.show_invoices(load_invoices_from_db(db_path))
         self.update_sum(db_path)
 
+    def load_encrypted_settings(self):
+        if not os.path.exists(ENV_ENC_FILE):
+            QMessageBox.information(self, "Konfiguration", "Keine verschlüsselte Konfiguration gefunden.")
+            self.btn_load_cfg.setEnabled(False)
+            return
+
+        password, ok = QInputDialog.getText(
+            self,
+            "Konfiguration laden",
+            "Passwort für verschlüsselte Einstellungen:",
+            QLineEdit.Password,
+        )
+        if not ok or not password:
+            return
+
+        try:
+            values = load_encrypted_env(password)
+        except EncryptedEnvError as exc:
+            self.error_signal.emit(str(exc))
+            return
+
+        self.user_edit.setText(values.get("AMZ_USER", ""))
+        self.pw_edit.setText(values.get("AMZ_PW", ""))
+        self.dir_edit.setText(values.get("DOWNLOAD_DIR", "invoices"))
+        self.db_edit.setText(values.get("DB_PATH", "invoices.db"))
+        self.cryptpw_edit.setText(password)
+        self.reload_db()
+        self.log_signal.emit("Verschlüsselte Einstellungen geladen.")
+
     def show_invoices(self, rows):
         self.table.setRowCount(len(rows))
         for row_idx, row in enumerate(rows):
@@ -259,6 +292,8 @@ class MainWindow(QWidget):
             "dir": directory,
             "dbfile": db_path
         }, cryptpw)
+        if hasattr(self, "btn_load_cfg"):
+            self.btn_load_cfg.setEnabled(True)
         args = []
         if self.browser_cb.isChecked():
             args.append('--browser')
