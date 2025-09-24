@@ -12,3 +12,4 @@ Core ideas:
 * Normalize localized invoice totals so both German and English number formats are interpreted consistently during parsing.
 * Provide an at-a-glance summary of downloaded invoices, including search and sum features, so users can reconcile finance records without manual portal work.
 * Ensure each retrieval run refreshes environment-driven credentials so updates in the GUI are respected immediately.
+* Allow users to reload previously encrypted credentials and paths within the GUI so production runs never rely on mock inputs.

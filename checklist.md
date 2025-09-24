@@ -3,6 +3,7 @@
 ## ✅ Completed
 - [x] Design Qt-based interface for entering Amazon Business credentials and options.
 - [x] Implement encrypted storage for credentials via `.env.enc` and runtime `.env` handling.
+- [x] Load existing encrypted credentials and paths directly in the Qt frontend.
 - [x] Automate Amazon Business invoice retrieval with Selenium and optional headless mode.
 - [x] Parse downloaded PDFs to capture totals and payment references for database storage.
 - [x] Display downloaded invoices in a searchable, sortable table with running total.
