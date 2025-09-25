@@ -90,9 +90,11 @@ def run(
         log("Bitte AMZ_USER und AMZ_PW in der .env setzen")
         return
 
-    DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR") or "invoices")
+    DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR") or "invoices").expanduser()
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    DB_PATH = Path(os.getenv("DB_PATH") or "invoices.db")
+    DB_PATH = Path(os.getenv("DB_PATH") or "invoices.db").expanduser()
+    if not DB_PATH.parent.exists():
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_URL = (
         "https://www.amazon.de/b2b/aba/reports"
         "?reportType=items_report_1"

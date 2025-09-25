@@ -95,10 +95,11 @@ def load_encrypted_env(password):
     return result
 
 def load_invoices_from_db(db_path, search_term=None):
-    if not os.path.exists(db_path):
+    expanded_path = os.path.expanduser(db_path)
+    if not os.path.exists(expanded_path):
         return []
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(expanded_path) as conn:
             cur = conn.cursor()
             query = (
                 "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
@@ -118,10 +119,11 @@ def load_invoices_from_db(db_path, search_term=None):
         return []
 
 def sum_amounts_from_db(db_path, search_term=None):
-    if not os.path.exists(db_path):
+    expanded_path = os.path.expanduser(db_path)
+    if not os.path.exists(expanded_path):
         return 0.0
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(expanded_path) as conn:
             cur = conn.cursor()
             query = "SELECT SUM(amount) FROM invoices"
             params = ()
