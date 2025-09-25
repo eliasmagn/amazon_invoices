@@ -11,7 +11,7 @@
 - [x] Harden amount parsing with locale-aware normalization and doctest coverage for German and English formats.
 - [x] Strengthen encrypted configuration storage with salted PBKDF2 key derivation and surfaced save/load errors in the GUI.
 - [x] Replace brittle Selenium sleeps with DOM-aware waits and sanitize generated filenames for cross-platform safety.
-
+- [x] Resolve user-supplied paths like `~/Downloads` and create missing directories before the worker connects to SQLite or writes invoices.
 ## 🔄 In Progress / Planned
 - [ ] Provide packaged application binaries for Windows/macOS/Linux users.
 - [ ] Add automated tests or CI pipeline to catch regressions in GUI and worker logic.

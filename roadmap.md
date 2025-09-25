@@ -6,7 +6,7 @@
 - ✅ Stärker gehärtete Konfigurationsverschlüsselung (salted PBKDF2) und UI-Fehlerbehandlung beim Speichern/Laden.
 - ✅ Selenium-Navigation setzt auf DOM-Waits statt statische Sleeps und erzeugt betriebssichere Dateinamen.
 - 🔄 Dokumentation verfeinern (Nutzer-FAQ, Datenbankschema) und erste manuelle Regressionstests erfassen.
-
+- ✅ Nutzerpfade wie `~/Downloads` werden automatisch aufgelöst und fehlende Verzeichnisse angelegt, sodass Downloads und Datenbankzugriffe nicht mehr scheitern.
 ## Q3 2024 – Bedienkomfort & Zuverlässigkeit
 - [ ] Paketierte Builds für Windows/macOS/Linux bereitstellen.
 - [ ] Automatisierte Tests (GUI-Smoke-Tests, Worker-Integration) und CI-Pipeline aufsetzen.

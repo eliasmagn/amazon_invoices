@@ -42,7 +42,7 @@ Python dependencies are listed in `requirements.txt` and include PySide6, Seleni
    ```bash
    python amazon_invoices_gui_qt.py
    ```
-2. Enter your Amazon Business username and password. Choose the download directory for PDFs and the SQLite database file used for metadata.
+2. Enter your Amazon Business username and password. Choose the download directory for PDFs and the SQLite database file used for metadata. Paths may include `~` to reference your home directory; the worker expands them and creates missing folders automatically before a run.
 3. Provide an encryption password. Credentials and settings are encrypted into `.env.enc` and only decrypted into a temporary `.env` file during downloads.
 4. If you already have an `.env.enc`, click **Konfiguration laden** to decrypt and prefill the stored credentials, directory, and database path. The entered password is reused for the next download run.
 5. (Optional) Enable **Per Browser herunterladen (--browser)** to force Selenium to perform the PDF downloads directly. Enable **Browserfenster anzeigen (--no-headless)** if you need to watch the automated browser.
