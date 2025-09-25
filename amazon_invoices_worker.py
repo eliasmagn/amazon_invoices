@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urljoin
 
 
 def _normalize_amount_string(amount_str: str) -> float | None:
@@ -203,12 +204,29 @@ def run(
         wait.until(EC.url_contains("/b2b/aba/reports"))
         log("Login erfolgreich.")
 
+    PDF_LINK_LOCATOR = (By.CSS_SELECTOR, 'a[href*="/b2b/aba/receipt/v2/"][href$=".pdf"]')
+    BASE_URL = "https://www.amazon.de"
+
+    def _wait_for_pdf_links(timeout: int = 60) -> None:
+        try:
+            WebDriverWait(driver, timeout).until(
+                lambda d: d.find_elements(*PDF_LINK_LOCATOR) or "Keine Rechnungen" in d.page_source
+            )
+        except TimeoutException:
+            logging.getLogger(__name__).warning("Keine PDF-Links innerhalb des Zeitlimits gefunden.")
+
     def extract_links_current_page() -> list[str]:
-        time.sleep(15)
-        html = driver.page_source
-        hrefs = re.findall(r'href="(/b2b/aba/receipt/v2/[^\"]+\.pdf)"', html)
-        base = "https://www.amazon.de"
-        return [base + h for h in hrefs]
+        _wait_for_pdf_links()
+        links: list[str] = []
+        for elem in driver.find_elements(*PDF_LINK_LOCATOR):
+            href = (elem.get_attribute("href") or "").strip()
+            if not href:
+                continue
+            if href.startswith("http"):
+                links.append(href)
+            else:
+                links.append(urljoin(BASE_URL, href))
+        return links
 
     def collect_links_all_pages(conn: sqlite3.Connection) -> list[str]:
         all_new_links: list[str] = []
@@ -216,7 +234,6 @@ def run(
         next_btn_locator = (By.CSS_SELECTOR, 'button[data-testid="next-button"]')
 
         while True:
-            time.sleep(8)
             log(f"Scanne Seite {page} …")
             links = extract_links_current_page()
             for url in links:
@@ -238,6 +255,7 @@ def run(
             if disabled:
                 log("Letzte Seite erreicht.")
                 break
+            previous_html = driver.page_source
             try:
                 wait.until(EC.element_to_be_clickable(next_btn_locator)).click()
             except TimeoutException:
@@ -248,8 +266,12 @@ def run(
                     "arguments[0].scrollIntoView({block:'center'});", next_btn
                 )
                 driver.execute_script("arguments[0].click();", next_btn)
+            try:
+                wait.until(lambda d: d.page_source != previous_html)
+            except TimeoutException:
+                log("Seitenwechsel nicht erkannt – breche ab.")
+                break
             page += 1
-            time.sleep(2)
         return sorted(all_new_links)
 
     AMOUNT_PATTERNS = [
@@ -285,6 +307,20 @@ def run(
                 break
         return amount_val, currency, payment_ref
 
+    INVALID_FILENAME_CHARS = set('<>:"/\\|?*')
+
+    def _sanitize_filename_part(part: str) -> str:
+        cleaned = []
+        for ch in part:
+            if ch in INVALID_FILENAME_CHARS or ord(ch) < 32:
+                cleaned.append("_")
+            else:
+                cleaned.append(ch)
+        sanitized = "".join(cleaned)
+        sanitized = re.sub(r"\s+", "_", sanitized.strip())
+        sanitized = sanitized.strip(".")
+        return sanitized
+
     def build_final_filename(
         invoice_id: str,
         amount: float | None,
@@ -296,7 +332,13 @@ def run(
             parts.append(f"{amount:0.2f}_{currency}")
         if payment_ref:
             parts.append(payment_ref)
-        return "_".join(parts) + ".pdf"
+        safe_parts: list[str] = []
+        for idx, raw in enumerate(parts):
+            safe = _sanitize_filename_part(raw)
+            if not safe:
+                safe = "rechnung" if idx == 0 else "teil"
+            safe_parts.append(safe[:80])
+        return "_".join(safe_parts) + ".pdf"
 
     def download_with_requests(conn: sqlite3.Connection, links: list[str]) -> None:
         session = requests.Session()

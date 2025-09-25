@@ -3,6 +3,8 @@
 ## Q2 2024 – Stabilisierung und Produktivbetrieb
 - ✅ Versandfertige GUI mit verschlüsselter Konfigurationsablage und Reload-Schaltfläche.
 - ✅ Robuster Selenium-Worker mit optionalem Requests-Download und PDF-Parsing.
+- ✅ Stärker gehärtete Konfigurationsverschlüsselung (salted PBKDF2) und UI-Fehlerbehandlung beim Speichern/Laden.
+- ✅ Selenium-Navigation setzt auf DOM-Waits statt statische Sleeps und erzeugt betriebssichere Dateinamen.
 - 🔄 Dokumentation verfeinern (Nutzer-FAQ, Datenbankschema) und erste manuelle Regressionstests erfassen.
 
 ## Q3 2024 – Bedienkomfort & Zuverlässigkeit

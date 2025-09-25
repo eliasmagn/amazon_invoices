@@ -18,24 +18,44 @@ from cryptography.fernet import Fernet, InvalidToken
 import amazon_invoices_worker
 
 ENV_ENC_FILE = ".env.enc"
+KDF_SALT_BYTES = 16
+KDF_ITERATIONS = 200_000
+ENV_FILE_HEADER = b"AMZENV1"
 
 
 class EncryptedEnvError(RuntimeError):
     """Error raised when the encrypted environment file cannot be used."""
 
 
-def derive_key(password):
-    return base64.urlsafe_b64encode(hashlib.sha256(password.encode()).digest())
+def _derive_key_pbkdf2(password: str, salt: bytes) -> bytes:
+    return base64.urlsafe_b64encode(
+        hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, KDF_ITERATIONS)
+    )
 
-def encrypt_env(data, password):
-    key = derive_key(password)
-    f = Fernet(key)
-    return f.encrypt(data.encode())
 
-def decrypt_env(token, password):
-    key = derive_key(password)
+def _derive_key_legacy(password: str) -> bytes:
+    return base64.urlsafe_b64encode(hashlib.sha256(password.encode("utf-8")).digest())
+
+
+def encrypt_env(data: str, password: str) -> bytes:
+    salt = os.urandom(KDF_SALT_BYTES)
+    key = _derive_key_pbkdf2(password, salt)
     f = Fernet(key)
-    return f.decrypt(token).decode()
+    token = f.encrypt(data.encode("utf-8"))
+    return ENV_FILE_HEADER + salt + token
+
+
+def decrypt_env(blob: bytes, password: str) -> str:
+    if blob.startswith(ENV_FILE_HEADER) and len(blob) > len(ENV_FILE_HEADER) + KDF_SALT_BYTES:
+        salt = blob[len(ENV_FILE_HEADER):len(ENV_FILE_HEADER) + KDF_SALT_BYTES]
+        token = blob[len(ENV_FILE_HEADER) + KDF_SALT_BYTES:]
+        key = _derive_key_pbkdf2(password, salt)
+    else:
+        token = blob
+        key = _derive_key_legacy(password)
+    f = Fernet(key)
+    return f.decrypt(token).decode("utf-8")
+
 
 def save_encrypted_env(values, password):
     text = (
@@ -45,8 +65,11 @@ def save_encrypted_env(values, password):
         f"DB_PATH={values['dbfile']}\n"
     )
     token = encrypt_env(text, password)
-    with open(ENV_ENC_FILE, "wb") as f:
-        f.write(token)
+    try:
+        with open(ENV_ENC_FILE, "wb") as f:
+            f.write(token)
+    except OSError as exc:
+        raise EncryptedEnvError(f"Verschlüsselte Konfiguration konnte nicht gespeichert werden: {exc}") from exc
 
 def load_encrypted_env(password):
     if not os.path.exists(ENV_ENC_FILE):
@@ -75,22 +98,21 @@ def load_invoices_from_db(db_path, search_term=None):
     if not os.path.exists(db_path):
         return []
     try:
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        query = (
-            "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
-            "FROM invoices"
-        )
-        params = ()
-        if search_term:
-            query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-            like = f"%{search_term}%"
-            params = (like, like, like)
-        query += " ORDER BY downloaded_at DESC"
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        conn.close()
-        return rows
+        with sqlite3.connect(db_path) as conn:
+            cur = conn.cursor()
+            query = (
+                "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
+                "FROM invoices"
+            )
+            params = ()
+            if search_term:
+                query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+                like = f"%{search_term}%"
+                params = (like, like, like)
+            query += " ORDER BY downloaded_at DESC"
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            return rows
     except sqlite3.Error as exc:
         logging.getLogger(__name__).warning("Datenbank konnte nicht geladen werden: %s", exc)
         return []
@@ -99,18 +121,17 @@ def sum_amounts_from_db(db_path, search_term=None):
     if not os.path.exists(db_path):
         return 0.0
     try:
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        query = "SELECT SUM(amount) FROM invoices"
-        params = ()
-        if search_term:
-            query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-            like = f"%{search_term}%"
-            params = (like, like, like)
-        cur.execute(query, params)
-        result = cur.fetchone()
-        conn.close()
-        return result[0] if result and result[0] else 0.0
+        with sqlite3.connect(db_path) as conn:
+            cur = conn.cursor()
+            query = "SELECT SUM(amount) FROM invoices"
+            params = ()
+            if search_term:
+                query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+                like = f"%{search_term}%"
+                params = (like, like, like)
+            cur.execute(query, params)
+            result = cur.fetchone()
+            return result[0] if result and result[0] else 0.0
     except sqlite3.Error as exc:
         logging.getLogger(__name__).warning("Summenabfrage fehlgeschlagen: %s", exc)
         return 0.0
@@ -283,15 +304,16 @@ class MainWindow(QWidget):
         if not user or not pw or not cryptpw:
             QMessageBox.critical(self, "Fehler", "Bitte Zugangsdaten und Verschlüsselungs-Passwort eingeben.")
             return
-        if not db_path.lower().endswith('.db'):
-            db_path += '.db'
-            self.db_edit.setText(db_path)
-        save_encrypted_env({
-            "user": user,
-            "pw": pw,
-            "dir": directory,
-            "dbfile": db_path
-        }, cryptpw)
+        try:
+            save_encrypted_env({
+                "user": user,
+                "pw": pw,
+                "dir": directory,
+                "dbfile": db_path
+            }, cryptpw)
+        except EncryptedEnvError as exc:
+            self.error_signal.emit(str(exc))
+            return
         if hasattr(self, "btn_load_cfg"):
             self.btn_load_cfg.setEnabled(True)
         args = []
