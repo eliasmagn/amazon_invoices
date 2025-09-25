@@ -4,10 +4,11 @@ Amazon Invoices Downloader is a desktop application that automates the retrieval
 
 ## Features
 
-- Securely store Amazon credentials by encrypting them into an `.env.enc` file that is only decrypted during a download run.
+- Securely store Amazon credentials by encrypting them into an `.env.enc` file that is only decrypted during a download run, using a salted PBKDF2-derived Fernet key for brute-force resistance.
 - Headless-friendly Selenium workflow that logs into the Amazon Business reports page and discovers newly available invoice PDFs.
 - Optional switch to use the active Selenium session cookies with `requests` for fast, reliable downloads.
-- Automatic PDF parsing to capture totals and payment references, saved to an SQLite database.
+- Automatic PDF parsing to capture totals and payment references, saved to an SQLite database with filenames sanitised for all supported operating systems.
+- Smarter Selenium navigation that waits for invoice tables instead of relying on arbitrary sleep timers, increasing reliability without slowing downloads down.
 - Locale-aware normalization of invoice totals so German and English formatted amounts are interpreted consistently.
 - Qt-based table view that supports searching, sorting, and running totals over the downloaded invoices.
 - Reload encrypted credentials and directory settings directly within the GUI for repeated runs.
