@@ -13,13 +13,13 @@
 - [x] Replace brittle Selenium sleeps with DOM-aware waits and sanitize generated filenames for cross-platform safety.
 - [x] Resolve user-supplied paths like `~/Downloads` and create missing directories before the worker connects to SQLite or writes invoices.
 - [x] Close the GUI usability gaps by enabling table sorting, persisting the log history, localising totals, hardening amount parsing, and deduplicating invoice downloads.
+- [x] Document the database schema and add versioned migrations that preserve legacy invoice data.
 ## 🔄 In Progress / Planned
 - [ ] Provide packaged application binaries for Windows/macOS/Linux users.
 - [ ] Add automated tests or CI pipeline to catch regressions in GUI and worker logic.
 - [ ] Support multi-factor authentication flows beyond the current username/password login.
 - [ ] Improve error messaging and localisation for non-German language settings.
 - [ ] Allow manual refresh of Amazon authentication cookies without a full relogin.
-- [ ] Document the database schema and provide migration tooling for future changes.
 - [ ] Add export options (CSV/Excel) for downloaded invoice metadata.
 
 ## 🐞 Known Issues To Fix
