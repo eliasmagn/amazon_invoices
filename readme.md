@@ -58,6 +58,17 @@ The GUI deletes the temporary `.env` file when the worker finishes. Existing `in
 - **Metadata** is stored in the configured SQLite database. The `invoices` table tracks invoice IDs, filenames, totals, currencies, payment references, and timestamps.
 - **Credentials** are stored encrypted in `.env.enc`. Never commit this file or the decrypted `.env` to version control.
 
+### Database schema and migrations
+
+The worker initialises the SQLite database with a versioned schema so upgrades happen automatically:
+
+| Table | Purpose | Columns |
+| --- | --- | --- |
+| `invoices` | Stores one row per downloaded invoice. | `invoice_id` (PK), `filename`, `amount`, `currency`, `payment_ref`, `downloaded_at` (UTC ISO-8601). |
+| `schema_migrations` | Tracks applied schema versions. | `version` (PK), `applied_at` (UTC ISO-8601). |
+
+When the worker starts it creates the `schema_migrations` table (if required), checks the latest version, and applies outstanding migrations. Legacy `invoices` tables missing the modern columns are renamed to `invoices_legacy` before the current schema is created so historical data is preserved for manual review.
+
 ## Troubleshooting
 
 - Verify that ChromeDriver matches your Chrome version if Selenium fails to start.

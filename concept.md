@@ -15,3 +15,4 @@ Core ideas:
 * Expand user-provided paths (e.g. `~/Downloads`) and create required directories before worker runs so filesystem errors never block invoice retrievals.
 * Ensure each retrieval run refreshes environment-driven credentials so updates in the GUI are respected immediately while handling save/load errors gracefully within the UI.
 * Allow users to reload previously encrypted credentials and paths within the GUI so production runs never rely on mock inputs.
+* Guard the SQLite layout with lightweight schema migrations so future database changes roll out predictably without losing historical invoice metadata.

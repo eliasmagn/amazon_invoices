@@ -6,6 +6,7 @@ import io
 import time
 import logging
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
@@ -117,8 +118,33 @@ def run(
         }
         return expected.issubset(cols)
 
-    def init_db() -> sqlite3.Connection:
-        conn = sqlite3.connect(DB_PATH)
+    def _ensure_migrations_table(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version     INTEGER PRIMARY KEY,
+                applied_at  TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+    def _current_schema_version(conn: sqlite3.Connection) -> int:
+        cur = conn.execute("SELECT MAX(version) FROM schema_migrations")
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def _record_schema_version(conn: sqlite3.Connection, version: int) -> None:
+        conn.execute(
+            """
+            INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, ?)
+            """,
+            (version, datetime.utcnow().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+
+    def _migration_create_invoices_v1(conn: sqlite3.Connection) -> None:
         cur = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='invoices'"
         )
@@ -127,6 +153,7 @@ def run(
         if exists and not _schema_current(conn):
             log("Altes Rechnungs-Tabellenschema erkannt – wird zu 'invoices_legacy' umbenannt.")
             conn.execute("ALTER TABLE invoices RENAME TO invoices_legacy")
+            conn.commit()
             exists = False
 
         if not exists:
@@ -143,7 +170,25 @@ def run(
                 """
             )
             conn.commit()
-            log("Invoice-Tabelle angelegt (aktuelles Schema).")
+            log("Invoice-Tabelle angelegt (Schema-Version 1).")
+        else:
+            log("Invoice-Tabelle entspricht bereits Schema-Version 1.")
+
+    MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
+        (1, _migration_create_invoices_v1),
+    ]
+
+    def init_db() -> sqlite3.Connection:
+        conn = sqlite3.connect(DB_PATH)
+        _ensure_migrations_table(conn)
+        current_version = _current_schema_version(conn)
+
+        for version, migration in MIGRATIONS:
+            if version > current_version:
+                migration(conn)
+                _record_schema_version(conn, version)
+                log(f"Schema-Migration auf Version {version} abgeschlossen.")
+                current_version = version
         return conn
 
     def is_already_downloaded(conn: sqlite3.Connection, invoice_id: str) -> bool:
