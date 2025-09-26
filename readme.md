@@ -10,9 +10,10 @@ Amazon Invoices Downloader is a desktop application that automates the retrieval
 - Automatic PDF parsing to capture totals and payment references, saved to an SQLite database with filenames sanitised for all supported operating systems.
 - Smarter Selenium navigation that waits for invoice tables instead of relying on arbitrary sleep timers, increasing reliability without slowing downloads down.
 - Locale-aware normalization of invoice totals so German and English formatted amounts are interpreted consistently.
-- Qt-based table view that supports searching, sorting, and running totals over the downloaded invoices.
+- Qt-based table view that supports searching, sorting, and locale-aware running totals over the downloaded invoices.
 - Reload encrypted credentials and directory settings directly within the GUI for repeated runs.
 - Worker reloads environment configuration on every invocation, so updated credentials or directories entered in the GUI are used immediately.
+- Scrollable log history in the GUI that preserves worker progress messages across a full download run.
 
 ## Requirements
 
@@ -62,7 +63,12 @@ The GUI deletes the temporary `.env` file when the worker finishes. Existing `in
 - Verify that ChromeDriver matches your Chrome version if Selenium fails to start.
 - Amazon may require multi-factor authentication or additional verification steps; these are not yet automated and may need manual intervention.
 - If downloads stall, try running with the visible browser option to observe potential modal dialogs or errors.
-- Use the application log line at the bottom of the GUI window to see the most recent worker status message.
+- Use the scrolling log panel at the bottom of the GUI window to review worker status messages throughout the run.
+
+## Known Issues
+
+- Multi-factor authentication flows that require additional verification steps still need manual intervention.
+- Packaged binaries for Windows, macOS, or Linux are not yet available; run the tool from source for now.
 
 ## Development
 

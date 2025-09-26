@@ -11,6 +11,7 @@ Core ideas:
 * Parse downloaded PDFs to extract payment amounts and references, and persist the results in an SQLite database for quick lookup, filtering, and aggregation inside the GUI.
 * Normalize localized invoice totals so both German and English number formats are interpreted consistently during parsing.
 * Provide an at-a-glance summary of downloaded invoices, including search and sum features, so users can reconcile finance records without manual portal work.
+* Offer finance teams a sortable, locale-aware invoice overview with persistent log history so download status and totals remain transparent.
 * Expand user-provided paths (e.g. `~/Downloads`) and create required directories before worker runs so filesystem errors never block invoice retrievals.
 * Ensure each retrieval run refreshes environment-driven credentials so updates in the GUI are respected immediately while handling save/load errors gracefully within the UI.
 * Allow users to reload previously encrypted credentials and paths within the GUI so production runs never rely on mock inputs.
