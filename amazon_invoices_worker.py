@@ -26,6 +26,11 @@ def _normalize_amount_string(amount_str: str) -> float | None:
     """
 
     cleaned = amount_str.strip()
+    # Remove common thousands separators that may appear as hard spaces or apostrophes
+    cleaned = cleaned.replace("'", "")
+    cleaned = cleaned.replace("\u202f", " ").replace("\xa0", " ")
+    cleaned = re.sub(r"(?<=\d)\s+(?=\d)", "", cleaned)
+    cleaned = re.sub(r"\s*(,|\.)\s*", r"\1", cleaned)
     if not cleaned:
         return None
 
@@ -232,6 +237,7 @@ def run(
 
     def collect_links_all_pages(conn: sqlite3.Connection) -> list[str]:
         all_new_links: list[str] = []
+        seen_invoice_ids: set[str] = set()
         page = 1
         next_btn_locator = (By.CSS_SELECTOR, 'button[data-testid="next-button"]')
 
@@ -240,11 +246,13 @@ def run(
             links = extract_links_current_page()
             for url in links:
                 invoice_id = Path(url).stem
+                if invoice_id in seen_invoice_ids:
+                    continue
+                seen_invoice_ids.add(invoice_id)
                 if is_already_downloaded(conn, invoice_id):
                     # log(f"{invoice_id} bereits vorhanden – übersprungen")
-                    pass
-                else:
-                    all_new_links.append(url)
+                    continue
+                all_new_links.append(url)
             try:
                 next_btn = wait.until(EC.presence_of_element_located(next_btn_locator))
             except TimeoutException:

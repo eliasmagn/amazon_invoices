@@ -9,7 +9,7 @@ import resources_rc
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QCheckBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QAbstractItemView, QInputDialog
+    QHeaderView, QMessageBox, QAbstractItemView, QInputDialog, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
@@ -93,6 +93,13 @@ def load_encrypted_env(password):
         key, value = line.split("=", 1)
         result[key] = value
     return result
+
+
+def format_decimal_de(value: float) -> str:
+    """Format a decimal value using German-style separators."""
+    text = f"{value:,.2f}"
+    return text.replace(",", "_").replace(".", ",").replace("_", ".")
+
 
 def load_invoices_from_db(db_path, search_term=None):
     expanded_path = os.path.expanduser(db_path)
@@ -209,6 +216,7 @@ class MainWindow(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSortingEnabled(True)
         layout.addWidget(self.table)
 
         # Sum
@@ -216,12 +224,12 @@ class MainWindow(QWidget):
         layout.addWidget(self.sum_label)
 
         # Output (Log)
-        self.log_box = QLineEdit()
+        self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
         layout.addWidget(self.log_box)
 
         # Signal wiring
-        self.log_signal.connect(self.log_box.setText)
+        self.log_signal.connect(self.append_log_message)
         self.error_signal.connect(self._show_error)
         self.reload_signal.connect(self.reload_db)
         self.worker_finished.connect(self._on_worker_finished)
@@ -280,15 +288,29 @@ class MainWindow(QWidget):
         self.log_signal.emit("Verschlüsselte Einstellungen geladen.")
 
     def show_invoices(self, rows):
+        was_sorting = self.table.isSortingEnabled()
+        if was_sorting:
+            self.table.setSortingEnabled(False)
         self.table.setRowCount(len(rows))
         for row_idx, row in enumerate(rows):
             for col_idx, value in enumerate(row):
-                self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
+                item = QTableWidgetItem()
+                if value is None:
+                    item.setText("")
+                elif col_idx == 2:
+                    amount = float(value)
+                    item.setData(Qt.EditRole, amount)
+                    item.setText(format_decimal_de(amount))
+                else:
+                    item.setText(str(value))
+                self.table.setItem(row_idx, col_idx, item)
         self.table.resizeRowsToContents()
+        if was_sorting:
+            self.table.setSortingEnabled(True)
 
     def update_sum(self, db_path, search_term=None):
         total = sum_amounts_from_db(db_path, search_term)
-        self.sum_label.setText(f"Summe: {total:,.2f} EUR")
+        self.sum_label.setText(f"Summe: {format_decimal_de(total)} EUR")
 
     def search_invoices(self):
         search_term = self.search_edit.text()
@@ -368,6 +390,10 @@ class MainWindow(QWidget):
         self.log_signal.emit("Download abgeschlossen.")
         self.reload_signal.emit()
         self.worker_finished.emit()
+
+    def append_log_message(self, message: str) -> None:
+        self.log_box.appendPlainText(message)
+        self.log_box.verticalScrollBar().setValue(self.log_box.verticalScrollBar().maximum())
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
