@@ -9,6 +9,7 @@
 - ✅ GUI-Usability-Schulden abbauen: Tabellen-Sortierung aktivieren, Log-Historie anzeigen und Summen lokalisieren.
 - ✅ Nutzerpfade wie `~/Downloads` werden automatisch aufgelöst und fehlende Verzeichnisse angelegt, sodass Downloads und Datenbankzugriffe nicht mehr scheitern.
 - ✅ Rechnungsdatum automatisch aus PDFs extrahieren, lokal nachpflegen und im GUI-Datumsspaltenkopf anzeigen; Downloadzeitpunkt bleibt als separater Wert in SQLite erhalten.
+- ✅ Produktnamen aus Rechnungs-PDFs extrahieren, in SQLite speichern und über die GUI-Suche auffindbar machen.
 ## Q3 2024 – Bedienkomfort & Zuverlässigkeit
 - [ ] Paketierte Builds für Windows/macOS/Linux bereitstellen.
 - [ ] Automatisierte Tests (GUI-Smoke-Tests, Worker-Integration) und CI-Pipeline aufsetzen.
