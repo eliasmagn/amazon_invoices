@@ -8,6 +8,7 @@
 - ✅ Datenbankschema dokumentiert und leichtgewichtige Migrationserläuterung ergänzt (Nutzer-FAQ weiterhin offen).
 - ✅ GUI-Usability-Schulden abbauen: Tabellen-Sortierung aktivieren, Log-Historie anzeigen und Summen lokalisieren.
 - ✅ Nutzerpfade wie `~/Downloads` werden automatisch aufgelöst und fehlende Verzeichnisse angelegt, sodass Downloads und Datenbankzugriffe nicht mehr scheitern.
+- ✅ Rechnungsdatum automatisch aus PDFs extrahieren, lokal nachpflegen und im GUI-Datumsspaltenkopf anzeigen; Downloadzeitpunkt bleibt als separater Wert in SQLite erhalten.
 ## Q3 2024 – Bedienkomfort & Zuverlässigkeit
 - [ ] Paketierte Builds für Windows/macOS/Linux bereitstellen.
 - [ ] Automatisierte Tests (GUI-Smoke-Tests, Worker-Integration) und CI-Pipeline aufsetzen.

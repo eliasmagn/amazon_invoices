@@ -115,6 +115,7 @@ def run(
         expected = {
             "invoice_id", "filename", "amount",
             "currency", "payment_ref", "downloaded_at",
+            "invoice_date",
         }
         return expected.issubset(cols)
 
@@ -165,7 +166,8 @@ def run(
                     amount          REAL,
                     currency        TEXT,
                     payment_ref     TEXT,
-                    downloaded_at   TEXT NOT NULL
+                    downloaded_at   TEXT NOT NULL,
+                    invoice_date    TEXT
                 )
                 """
             )
@@ -174,8 +176,19 @@ def run(
         else:
             log("Invoice-Tabelle entspricht bereits Schema-Version 1.")
 
+    def _migration_add_invoice_date_v2(conn: sqlite3.Connection) -> None:
+        cur = conn.execute("PRAGMA table_info(invoices)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "invoice_date" not in cols:
+            conn.execute("ALTER TABLE invoices ADD COLUMN invoice_date TEXT")
+            conn.commit()
+            log("Spalte 'invoice_date' zur Invoice-Tabelle hinzugefügt (Schema-Version 2).")
+        else:
+            log("Spalte 'invoice_date' bereits vorhanden – keine Aktion erforderlich.")
+
     MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
         (1, _migration_create_invoices_v1),
+        (2, _migration_add_invoice_date_v2),
     ]
 
     def init_db() -> sqlite3.Connection:
@@ -193,9 +206,13 @@ def run(
 
     def is_already_downloaded(conn: sqlite3.Connection, invoice_id: str) -> bool:
         cur = conn.execute(
-            "SELECT 1 FROM invoices WHERE invoice_id = ? LIMIT 1", (invoice_id,)
+            "SELECT invoice_date IS NOT NULL FROM invoices WHERE invoice_id = ? LIMIT 1",
+            (invoice_id,),
         )
-        return cur.fetchone() is not None
+        row = cur.fetchone()
+        if row is None:
+            return False
+        return bool(row[0])
 
     def mark_as_downloaded(
         conn: sqlite3.Connection,
@@ -204,12 +221,21 @@ def run(
         amount: float | None,
         currency: str | None,
         payment_ref: str | None,
+        invoice_date: str | None,
     ):
+        now_iso = datetime.utcnow().isoformat(timespec="seconds")
         conn.execute(
             """
-            INSERT OR IGNORE INTO invoices
-            (invoice_id, filename, amount, currency, payment_ref, downloaded_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO invoices
+                (invoice_id, filename, amount, currency, payment_ref, downloaded_at, invoice_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(invoice_id) DO UPDATE SET
+                filename=excluded.filename,
+                amount=COALESCE(excluded.amount, invoices.amount),
+                currency=COALESCE(excluded.currency, invoices.currency),
+                payment_ref=COALESCE(excluded.payment_ref, invoices.payment_ref),
+                downloaded_at=excluded.downloaded_at,
+                invoice_date=COALESCE(excluded.invoice_date, invoices.invoice_date)
             """,
             (
                 invoice_id,
@@ -217,7 +243,8 @@ def run(
                 amount,
                 currency,
                 payment_ref,
-                datetime.utcnow().isoformat(timespec="seconds"),
+                now_iso,
+                invoice_date,
             ),
         )
         conn.commit()
@@ -286,6 +313,7 @@ def run(
         page = 1
         next_btn_locator = (By.CSS_SELECTOR, 'button[data-testid="next-button"]')
 
+        log("Suchzeitraum: Letzte 12 Wochen (PAST_12_WEEKS).")
         while True:
             log(f"Scanne Seite {page} …")
             links = extract_links_current_page()
@@ -327,6 +355,8 @@ def run(
                 log("Seitenwechsel nicht erkannt – breche ab.")
                 break
             page += 1
+        log(f"Seiten durchsucht: {page if page > 1 else 1}")
+        log(f"Neue Rechnungslinks gefunden: {len(all_new_links)}")
         return sorted(all_new_links)
 
     AMOUNT_PATTERNS = [
@@ -339,15 +369,78 @@ def run(
         re.compile(r"Payment\s+Reference\s+Number\s*[:#]?\s*(\S+)", re.I),
     ]
 
-    def parse_pdf_info(pdf_bytes: bytes) -> tuple[float | None, str | None, str | None]:
+    DATE_CANDIDATE_PATTERNS = [
+        re.compile(r"Rechnungsdatum\s*[:.]?\s*([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4})", re.I),
+        re.compile(r"Rechnungsdatum\s*[:.]?\s*([0-9]{1,2}\.?\s+[A-Za-zÄÖÜäöüß]+\s+[0-9]{4})", re.I),
+        re.compile(r"Invoice\s+Date\s*[:.]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})", re.I),
+        re.compile(r"Invoice\s+Date\s*[:.]?\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})", re.I),
+        re.compile(r"Ausgestellt\s+am\s*[:.]?\s*([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4})", re.I),
+    ]
+
+    GERMAN_MONTHS = {
+        "januar": 1,
+        "februar": 2,
+        "märz": 3,
+        "maerz": 3,
+        "april": 4,
+        "mai": 5,
+        "juni": 6,
+        "juli": 7,
+        "august": 8,
+        "september": 9,
+        "oktober": 10,
+        "november": 11,
+        "dezember": 12,
+    }
+
+    def _parse_date_candidate(candidate: str) -> str | None:
+        text_candidate = candidate.strip().replace(",", "")
+        for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                dt = datetime.strptime(text_candidate, fmt)
+                return dt.date().isoformat()
+            except ValueError:
+                continue
+        try:
+            dt = datetime.strptime(text_candidate, "%d %B %Y")
+            return dt.date().isoformat()
+        except ValueError:
+            pass
+        m = re.match(r"(\d{1,2})(?:\.)?\s+([A-Za-zÄÖÜäöüß]+)\s+(\d{4})", text_candidate)
+        if m:
+            day = int(m.group(1))
+            month_name = m.group(2).strip().lower()
+            month_name = month_name.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+            month = GERMAN_MONTHS.get(month_name)
+            if month:
+                year = int(m.group(3))
+                try:
+                    return datetime(year, month, day).date().isoformat()
+                except ValueError:
+                    return None
+        return None
+
+    def extract_invoice_date(text: str) -> str | None:
+        for pattern in DATE_CANDIDATE_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            candidate = match.group(1)
+            parsed = _parse_date_candidate(candidate)
+            if parsed:
+                return parsed
+        return None
+
+    def parse_pdf_info(pdf_bytes: bytes) -> tuple[float | None, str | None, str | None, str | None]:
         try:
             text = extract_text(io.BytesIO(pdf_bytes))
         except Exception as exc:
             log(f"PDF-Text konnte nicht extrahiert werden: {exc}")
-            return None, None, None
+            return None, None, None, None
         amount_val: float | None = None
         currency: str | None = None
         payment_ref: str | None = None
+        invoice_date: str | None = None
         for pat in AMOUNT_PATTERNS:
             if m := pat.search(text):
                 amount_str = m.group(1)
@@ -360,7 +453,50 @@ def run(
             if m := pat.search(text):
                 payment_ref = m.group(1)
                 break
-        return amount_val, currency, payment_ref
+        invoice_date = extract_invoice_date(text)
+        return amount_val, currency, payment_ref, invoice_date
+
+    def backfill_invoice_dates(conn: sqlite3.Connection) -> None:
+        cur = conn.execute(
+            "SELECT invoice_id, filename FROM invoices WHERE invoice_date IS NULL"
+        )
+        missing = cur.fetchall()
+        if not missing:
+            return
+        log(f"Fehlende Rechnungsdaten erkannt – versuche lokale PDFs auszuwerten ({len(missing)} offen).")
+        updates: list[tuple[str | None, float | None, str | None, str | None, str]] = []
+        for invoice_id, filename in missing:
+            pdf_path = DOWNLOAD_DIR / filename
+            if not pdf_path.exists():
+                log(f"PDF für {invoice_id} ({filename}) nicht gefunden – übersprungen.")
+                continue
+            try:
+                data = pdf_path.read_bytes()
+            except OSError as exc:
+                log(f"PDF {filename} konnte nicht gelesen werden ({exc}) – übersprungen.")
+                continue
+            if not data.startswith(b"%PDF"):
+                log(f"Datei {filename} ist kein gültiges PDF – übersprungen.")
+                continue
+            amount, currency, payment_ref, invoice_date = parse_pdf_info(data)
+            if invoice_date:
+                updates.append((invoice_date, amount, currency, payment_ref, invoice_id))
+        if updates:
+            conn.executemany(
+                """
+                UPDATE invoices
+                SET invoice_date = ?,
+                    amount = COALESCE(?, amount),
+                    currency = COALESCE(?, currency),
+                    payment_ref = COALESCE(?, payment_ref)
+                WHERE invoice_id = ?
+                """,
+                updates,
+            )
+            conn.commit()
+            log(f"Rechnungsdatum für {len(updates)} Rechnungen aus lokalen PDFs ergänzt.")
+        else:
+            log("Lokale PDFs enthielten keine zusätzlichen Rechnungsdaten.")
 
     INVALID_FILENAME_CHARS = set('<>:"/\\|?*')
 
@@ -428,20 +564,20 @@ def run(
                 if not data.getvalue().startswith(b"%PDF"):
                     log(f"Kein PDF-Header – übersprungen: {url}")
                     continue
-                amount, currency, payment_ref = parse_pdf_info(data.getvalue())
+                amount, currency, payment_ref, invoice_date = parse_pdf_info(data.getvalue())
                 final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
                 dest_path = DOWNLOAD_DIR / final_name
                 if dest_path.exists():
                     log(f"{final_name} existiert bereits – wird übersprungen")
                     mark_as_downloaded(
-                        conn, invoice_id, final_name, amount, currency, payment_ref
+                        conn, invoice_id, final_name, amount, currency, payment_ref, invoice_date
                     )
                     continue
                 with open(dest_path, "wb") as f:
                     f.write(data.getvalue())
                 log(f"Gespeichert (Requests): {dest_path.name}")
                 mark_as_downloaded(
-                    conn, invoice_id, final_name, amount, currency, payment_ref
+                    conn, invoice_id, final_name, amount, currency, payment_ref, invoice_date
                 )
         finally:
             session.close()
@@ -497,7 +633,7 @@ def run(
                 except OSError:
                     pass
                 continue
-            amount, currency, payment_ref = parse_pdf_info(data)
+            amount, currency, payment_ref, invoice_date = parse_pdf_info(data)
             final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
             dest_path = DOWNLOAD_DIR / final_name
             if dest_path.exists():
@@ -507,7 +643,7 @@ def run(
                         downloaded.unlink()
                 except OSError:
                     pass
-                mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref)
+                mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref, invoice_date)
                 continue
             try:
                 if downloaded != dest_path:
@@ -516,12 +652,13 @@ def run(
                 log(f"Zieldatei konnte nicht erstellt werden ({exc}) – übersprungen: {downloaded.name}")
                 continue
             log(f"Gespeichert (Browser): {dest_path.name}")
-            mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref)
+            mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref, invoice_date)
 
     # Main-Flow
     conn: sqlite3.Connection | None = None
     try:
         conn = init_db()
+        backfill_invoice_dates(conn)
         login_if_needed()
         log("Bericht geöffnet – sammle neue Links …")
         links = collect_links_all_pages(conn)
