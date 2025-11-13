@@ -112,34 +112,37 @@ def load_invoices_from_db(db_path, search_term=None):
             cur.execute("PRAGMA table_info(invoices)")
             columns = {row[1] for row in cur.fetchall()}
             has_invoice_date = "invoice_date" in columns
-            if has_invoice_date:
-                query = (
-                    "SELECT invoice_id, filename, amount, currency, payment_ref, "
-                    "COALESCE(invoice_date, downloaded_at) AS display_date "
-                    "FROM invoices"
-                )
-            else:
-                query = (
-                    "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
-                    "FROM invoices"
-                )
-            params = ()
+            has_product_names = "product_names" in columns
+            select_parts = [
+                "invoice_id",
+                "filename",
+                "product_names" if has_product_names else "NULL AS product_names",
+                "amount",
+                "currency",
+                "payment_ref",
+                "COALESCE(invoice_date, downloaded_at) AS display_date"
+                if has_invoice_date
+                else "downloaded_at AS display_date",
+            ]
+            query = f"SELECT {', '.join(select_parts)} FROM invoices"
+            params: list[str] = []
             if search_term:
                 like = f"%{search_term}%"
+                conditions = [
+                    "invoice_id LIKE ?",
+                    "filename LIKE ?",
+                    "payment_ref LIKE ?",
+                ]
+                params.extend([like, like, like])
+                if has_product_names:
+                    conditions.append("product_names LIKE ?")
+                    params.append(like)
                 if has_invoice_date:
-                    query += (
-                        " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-                        " OR invoice_date LIKE ?"
-                    )
-                    params = (like, like, like, like)
-                else:
-                    query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-                    params = (like, like, like)
-            if has_invoice_date:
-                query += " ORDER BY COALESCE(invoice_date, downloaded_at) DESC, downloaded_at DESC"
-            else:
-                query += " ORDER BY downloaded_at DESC"
-            cur.execute(query, params)
+                    conditions.append("invoice_date LIKE ?")
+                    params.append(like)
+                query += " WHERE " + " OR ".join(conditions)
+            query += " ORDER BY display_date DESC, downloaded_at DESC"
+            cur.execute(query, tuple(params))
             rows = cur.fetchall()
             return rows
     except sqlite3.Error as exc:
@@ -156,20 +159,25 @@ def sum_amounts_from_db(db_path, search_term=None):
             cur.execute("PRAGMA table_info(invoices)")
             columns = {row[1] for row in cur.fetchall()}
             has_invoice_date = "invoice_date" in columns
+            has_product_names = "product_names" in columns
             query = "SELECT SUM(amount) FROM invoices"
-            params = ()
+            params: list[str] = []
             if search_term:
                 like = f"%{search_term}%"
+                conditions = [
+                    "invoice_id LIKE ?",
+                    "filename LIKE ?",
+                    "payment_ref LIKE ?",
+                ]
+                params.extend([like, like, like])
+                if has_product_names:
+                    conditions.append("product_names LIKE ?")
+                    params.append(like)
                 if has_invoice_date:
-                    query += (
-                        " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-                        " OR invoice_date LIKE ?"
-                    )
-                    params = (like, like, like, like)
-                else:
-                    query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
-                    params = (like, like, like)
-            cur.execute(query, params)
+                    conditions.append("invoice_date LIKE ?")
+                    params.append(like)
+                query += " WHERE " + " OR ".join(conditions)
+            cur.execute(query, tuple(params))
             result = cur.fetchone()
             return result[0] if result and result[0] else 0.0
     except sqlite3.Error as exc:
@@ -242,8 +250,16 @@ class MainWindow(QWidget):
         layout.addLayout(actions)
 
         # Table
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Rechnung", "Datei", "Betrag", "Währung", "Ref", "Datum"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            "Rechnung",
+            "Datei",
+            "Produkte",
+            "Betrag",
+            "Währung",
+            "Ref",
+            "Datum",
+        ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -328,11 +344,11 @@ class MainWindow(QWidget):
                 item = QTableWidgetItem()
                 if value is None:
                     item.setText("")
-                elif col_idx == 2:
+                elif col_idx == 3:
                     amount = float(value)
                     item.setData(Qt.EditRole, amount)
                     item.setText(format_decimal_de(amount))
-                elif col_idx == 5:
+                elif col_idx == 6:
                     iso_text = str(value)
                     dt_obj = None
                     try:
@@ -351,6 +367,11 @@ class MainWindow(QWidget):
                             )
                     else:
                         item.setText(iso_text)
+                elif col_idx == 2:
+                    text_value = str(value)
+                    item.setText(text_value)
+                    if text_value:
+                        item.setToolTip(text_value)
                 else:
                     item.setText(str(value))
                 self.table.setItem(row_idx, col_idx, item)

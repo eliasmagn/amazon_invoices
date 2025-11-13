@@ -186,9 +186,20 @@ def run(
         else:
             log("Spalte 'invoice_date' bereits vorhanden – keine Aktion erforderlich.")
 
+    def _migration_add_product_names_v3(conn: sqlite3.Connection) -> None:
+        cur = conn.execute("PRAGMA table_info(invoices)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "product_names" not in cols:
+            conn.execute("ALTER TABLE invoices ADD COLUMN product_names TEXT")
+            conn.commit()
+            log("Spalte 'product_names' zur Invoice-Tabelle hinzugefügt (Schema-Version 3).")
+        else:
+            log("Spalte 'product_names' bereits vorhanden – keine Aktion erforderlich.")
+
     MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
         (1, _migration_create_invoices_v1),
         (2, _migration_add_invoice_date_v2),
+        (3, _migration_add_product_names_v3),
     ]
 
     def init_db() -> sqlite3.Connection:
@@ -206,7 +217,15 @@ def run(
 
     def is_already_downloaded(conn: sqlite3.Connection, invoice_id: str) -> bool:
         cur = conn.execute(
-            "SELECT invoice_date IS NOT NULL FROM invoices WHERE invoice_id = ? LIMIT 1",
+            """
+            SELECT CASE
+                     WHEN invoice_date IS NOT NULL AND product_names IS NOT NULL
+                     THEN 1 ELSE 0
+                   END
+            FROM invoices
+            WHERE invoice_id = ?
+            LIMIT 1
+            """,
             (invoice_id,),
         )
         row = cur.fetchone()
@@ -222,20 +241,31 @@ def run(
         currency: str | None,
         payment_ref: str | None,
         invoice_date: str | None,
+        product_names: str | None,
     ):
         now_iso = datetime.utcnow().isoformat(timespec="seconds")
         conn.execute(
             """
             INSERT INTO invoices
-                (invoice_id, filename, amount, currency, payment_ref, downloaded_at, invoice_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (
+                    invoice_id,
+                    filename,
+                    amount,
+                    currency,
+                    payment_ref,
+                    downloaded_at,
+                    invoice_date,
+                    product_names
+                )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(invoice_id) DO UPDATE SET
                 filename=excluded.filename,
                 amount=COALESCE(excluded.amount, invoices.amount),
                 currency=COALESCE(excluded.currency, invoices.currency),
                 payment_ref=COALESCE(excluded.payment_ref, invoices.payment_ref),
                 downloaded_at=excluded.downloaded_at,
-                invoice_date=COALESCE(excluded.invoice_date, invoices.invoice_date)
+                invoice_date=COALESCE(excluded.invoice_date, invoices.invoice_date),
+                product_names=COALESCE(excluded.product_names, invoices.product_names)
             """,
             (
                 invoice_id,
@@ -245,6 +275,7 @@ def run(
                 payment_ref,
                 now_iso,
                 invoice_date,
+                product_names,
             ),
         )
         conn.commit()
@@ -377,6 +408,26 @@ def run(
         re.compile(r"Ausgestellt\s+am\s*[:.]?\s*([0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4})", re.I),
     ]
 
+    PRODUCT_SECTION_HEADERS = [
+        re.compile(r"Beschreibung", re.I),
+        re.compile(r"Description", re.I),
+        re.compile(r"Bestellte\s+Artikel", re.I),
+        re.compile(r"Ordered\s+Items", re.I),
+    ]
+
+    PRODUCT_SECTION_STOPWORDS = [
+        re.compile(r"Zwischensumme", re.I),
+        re.compile(r"Subtotal", re.I),
+        re.compile(r"Summe", re.I),
+        re.compile(r"Gesamtbetrag", re.I),
+        re.compile(r"Total", re.I),
+        re.compile(r"Versand", re.I),
+        re.compile(r"Shipping", re.I),
+        re.compile(r"MwSt", re.I),
+        re.compile(r"VAT", re.I),
+        re.compile(r"Steuer", re.I),
+    ]
+
     GERMAN_MONTHS = {
         "januar": 1,
         "februar": 2,
@@ -431,16 +482,48 @@ def run(
                 return parsed
         return None
 
-    def parse_pdf_info(pdf_bytes: bytes) -> tuple[float | None, str | None, str | None, str | None]:
+    def extract_product_names(text: str) -> str | None:
+        lines = [re.sub(r"\s{2,}", " ", ln.strip()) for ln in text.splitlines()]
+        capture = False
+        collected: list[str] = []
+        for raw_line in lines:
+            if not raw_line:
+                continue
+            lower = raw_line.lower()
+            if not capture and any(pat.search(raw_line) for pat in PRODUCT_SECTION_HEADERS):
+                capture = True
+                continue
+            if capture and any(pat.search(raw_line) for pat in PRODUCT_SECTION_STOPWORDS):
+                break
+            if not capture:
+                continue
+            if re.search(r"\b(?:sku|asin|bestellnummer|order number)\b", lower):
+                continue
+            cleaned = re.sub(r"\s+[-\d.,]+\s*(?:eur|€)?$", "", raw_line, flags=re.I).strip()
+            cleaned = re.sub(r"^[\d\s]+x?\s+", "", cleaned)
+            if not cleaned:
+                continue
+            if not re.search(r"[A-Za-zÄÖÜäöüß]", cleaned):
+                continue
+            collected.append(cleaned)
+        if not collected:
+            return None
+        unique_order_preserving = list(dict.fromkeys(collected))
+        return "\n".join(unique_order_preserving) if unique_order_preserving else None
+
+    def parse_pdf_info(
+        pdf_bytes: bytes,
+    ) -> tuple[float | None, str | None, str | None, str | None, str | None]:
         try:
             text = extract_text(io.BytesIO(pdf_bytes))
         except Exception as exc:
             log(f"PDF-Text konnte nicht extrahiert werden: {exc}")
-            return None, None, None, None
+            return None, None, None, None, None
         amount_val: float | None = None
         currency: str | None = None
         payment_ref: str | None = None
         invoice_date: str | None = None
+        product_names: str | None = None
         for pat in AMOUNT_PATTERNS:
             if m := pat.search(text):
                 amount_str = m.group(1)
@@ -454,17 +537,21 @@ def run(
                 payment_ref = m.group(1)
                 break
         invoice_date = extract_invoice_date(text)
-        return amount_val, currency, payment_ref, invoice_date
+        product_names = extract_product_names(text)
+        return amount_val, currency, payment_ref, invoice_date, product_names
 
-    def backfill_invoice_dates(conn: sqlite3.Connection) -> None:
+    def backfill_invoice_metadata(conn: sqlite3.Connection) -> None:
         cur = conn.execute(
-            "SELECT invoice_id, filename FROM invoices WHERE invoice_date IS NULL"
+            "SELECT invoice_id, filename FROM invoices "
+            "WHERE invoice_date IS NULL OR product_names IS NULL"
         )
         missing = cur.fetchall()
         if not missing:
             return
         log(f"Fehlende Rechnungsdaten erkannt – versuche lokale PDFs auszuwerten ({len(missing)} offen).")
-        updates: list[tuple[str | None, float | None, str | None, str | None, str]] = []
+        updates: list[
+            tuple[str | None, str | None, float | None, str | None, str | None, str]
+        ] = []
         for invoice_id, filename in missing:
             pdf_path = DOWNLOAD_DIR / filename
             if not pdf_path.exists():
@@ -478,14 +565,22 @@ def run(
             if not data.startswith(b"%PDF"):
                 log(f"Datei {filename} ist kein gültiges PDF – übersprungen.")
                 continue
-            amount, currency, payment_ref, invoice_date = parse_pdf_info(data)
-            if invoice_date:
-                updates.append((invoice_date, amount, currency, payment_ref, invoice_id))
+            amount, currency, payment_ref, invoice_date, product_names = parse_pdf_info(data)
+            if invoice_date or product_names:
+                updates.append((
+                    invoice_date,
+                    product_names,
+                    amount,
+                    currency,
+                    payment_ref,
+                    invoice_id,
+                ))
         if updates:
             conn.executemany(
                 """
                 UPDATE invoices
-                SET invoice_date = ?,
+                SET invoice_date = COALESCE(?, invoice_date),
+                    product_names = COALESCE(?, product_names),
                     amount = COALESCE(?, amount),
                     currency = COALESCE(?, currency),
                     payment_ref = COALESCE(?, payment_ref)
@@ -494,7 +589,7 @@ def run(
                 updates,
             )
             conn.commit()
-            log(f"Rechnungsdatum für {len(updates)} Rechnungen aus lokalen PDFs ergänzt.")
+            log(f"Rechnungsdaten für {len(updates)} Rechnungen aus lokalen PDFs ergänzt.")
         else:
             log("Lokale PDFs enthielten keine zusätzlichen Rechnungsdaten.")
 
@@ -564,20 +659,36 @@ def run(
                 if not data.getvalue().startswith(b"%PDF"):
                     log(f"Kein PDF-Header – übersprungen: {url}")
                     continue
-                amount, currency, payment_ref, invoice_date = parse_pdf_info(data.getvalue())
+                amount, currency, payment_ref, invoice_date, product_names = parse_pdf_info(
+                    data.getvalue()
+                )
                 final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
                 dest_path = DOWNLOAD_DIR / final_name
                 if dest_path.exists():
                     log(f"{final_name} existiert bereits – wird übersprungen")
                     mark_as_downloaded(
-                        conn, invoice_id, final_name, amount, currency, payment_ref, invoice_date
+                        conn,
+                        invoice_id,
+                        final_name,
+                        amount,
+                        currency,
+                        payment_ref,
+                        invoice_date,
+                        product_names,
                     )
                     continue
                 with open(dest_path, "wb") as f:
                     f.write(data.getvalue())
                 log(f"Gespeichert (Requests): {dest_path.name}")
                 mark_as_downloaded(
-                    conn, invoice_id, final_name, amount, currency, payment_ref, invoice_date
+                    conn,
+                    invoice_id,
+                    final_name,
+                    amount,
+                    currency,
+                    payment_ref,
+                    invoice_date,
+                    product_names,
                 )
         finally:
             session.close()
@@ -633,7 +744,7 @@ def run(
                 except OSError:
                     pass
                 continue
-            amount, currency, payment_ref, invoice_date = parse_pdf_info(data)
+            amount, currency, payment_ref, invoice_date, product_names = parse_pdf_info(data)
             final_name = build_final_filename(invoice_id, amount, currency, payment_ref)
             dest_path = DOWNLOAD_DIR / final_name
             if dest_path.exists():
@@ -643,7 +754,16 @@ def run(
                         downloaded.unlink()
                 except OSError:
                     pass
-                mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref, invoice_date)
+                mark_as_downloaded(
+                    conn,
+                    invoice_id,
+                    dest_path.name,
+                    amount,
+                    currency,
+                    payment_ref,
+                    invoice_date,
+                    product_names,
+                )
                 continue
             try:
                 if downloaded != dest_path:
@@ -652,13 +772,22 @@ def run(
                 log(f"Zieldatei konnte nicht erstellt werden ({exc}) – übersprungen: {downloaded.name}")
                 continue
             log(f"Gespeichert (Browser): {dest_path.name}")
-            mark_as_downloaded(conn, invoice_id, dest_path.name, amount, currency, payment_ref, invoice_date)
+            mark_as_downloaded(
+                conn,
+                invoice_id,
+                dest_path.name,
+                amount,
+                currency,
+                payment_ref,
+                invoice_date,
+                product_names,
+            )
 
     # Main-Flow
     conn: sqlite3.Connection | None = None
     try:
         conn = init_db()
-        backfill_invoice_dates(conn)
+        backfill_invoice_metadata(conn)
         login_if_needed()
         log("Bericht geöffnet – sammle neue Links …")
         links = collect_links_all_pages(conn)

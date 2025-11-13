@@ -7,11 +7,11 @@ Amazon Invoices Downloader is a desktop application that automates the retrieval
 - Securely store Amazon credentials by encrypting them into an `.env.enc` file that is only decrypted during a download run, using a salted PBKDF2-derived Fernet key for brute-force resistance.
 - Headless-friendly Selenium workflow that logs into the Amazon Business reports page and discovers newly available invoice PDFs.
 - Optional switch to use the active Selenium session cookies with `requests` for fast, reliable downloads.
-- Automatic PDF parsing to capture totals and payment references, saved to an SQLite database with filenames sanitised for all supported operating systems.
+- Automatic PDF parsing to capture totals, payment references, and product names, saved to an SQLite database with filenames sanitised for all supported operating systems.
 - Extract and persist invoice dates from PDFs so the GUI shows the actual Rechnungsdatum while the database still tracks the download timestamp for auditing.
 - Smarter Selenium navigation that waits for invoice tables instead of relying on arbitrary sleep timers, increasing reliability without slowing downloads down.
 - Locale-aware normalization of invoice totals so German and English formatted amounts are interpreted consistently.
-- Qt-based table view that supports searching, sorting, and locale-aware running totals over the downloaded invoices.
+- Qt-based table view that supports searching (including product keywords), sorting, and locale-aware running totals over the downloaded invoices.
 - Reload encrypted credentials and directory settings directly within the GUI for repeated runs.
 - Worker reloads environment configuration on every invocation, so updated credentials or directories entered in the GUI are used immediately.
 - Scrollable log history in the GUI that preserves worker progress messages across a full download run, now including the selected search period and the number of portal pages scanned.
@@ -48,7 +48,7 @@ Python dependencies are listed in `requirements.txt` and include PySide6, Seleni
 3. Provide an encryption password. Credentials and settings are encrypted into `.env.enc` and only decrypted into a temporary `.env` file during downloads.
 4. If you already have an `.env.enc`, click **Konfiguration laden** to decrypt and prefill the stored credentials, directory, and database path. The entered password is reused for the next download run.
 5. (Optional) Enable **Per Browser herunterladen (--browser)** to force Selenium to perform the PDF downloads directly. Enable **Browserfenster anzeigen (--no-headless)** if you need to watch the automated browser.
-6. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals, payment references, and invoice dates, renames the PDFs with that metadata, and stores the enriched filenames and metadata in the SQLite database.
+6. Click **Download starten**. The worker logs into Amazon Business, discovers new invoice links, downloads PDF files, parses totals, payment references, invoice dates, and product names, renames the PDFs with that metadata, and stores the enriched filenames and metadata in the SQLite database.
 7. Use **Datenbank neu laden** or the search field to refresh and filter the table. The **Datum** column now reflects the invoice date (falling back to the download timestamp only when the PDF omits it), and the **Summe** label shows the total of the currently displayed invoices.
 
 The GUI deletes the temporary `.env` file when the worker finishes. Existing `invoices.db` files will be migrated automatically if an outdated schema is detected; older data is preserved by renaming the legacy table.
@@ -56,7 +56,7 @@ The GUI deletes the temporary `.env` file when the worker finishes. Existing `in
 ## Data Storage
 
 - **PDF files** are saved to the configured download directory, defaulting to `invoices/`.
-- **Metadata** is stored in the configured SQLite database. The `invoices` table tracks invoice IDs, filenames, totals, currencies, payment references, and timestamps.
+- **Metadata** is stored in the configured SQLite database. The `invoices` table tracks invoice IDs, filenames, totals, currencies, payment references, timestamps, and the products contained in each invoice for keyword searches.
 - **Credentials** are stored encrypted in `.env.enc`. Never commit this file or the decrypted `.env` to version control.
 
 ### Database schema and migrations
@@ -65,7 +65,7 @@ The worker initialises the SQLite database with a versioned schema so upgrades h
 
 | Table | Purpose | Columns |
 | --- | --- | --- |
-| `invoices` | Stores one row per downloaded invoice. | `invoice_id` (PK), `filename`, `amount`, `currency`, `payment_ref`, `downloaded_at` (UTC ISO-8601), `invoice_date` (ISO-8601 date). |
+| `invoices` | Stores one row per downloaded invoice. | `invoice_id` (PK), `filename`, `amount`, `currency`, `payment_ref`, `downloaded_at` (UTC ISO-8601), `invoice_date` (ISO-8601 date), `product_names` (newline-separated text). |
 | `schema_migrations` | Tracks applied schema versions. | `version` (PK), `applied_at` (UTC ISO-8601). |
 
 When the worker starts it creates the `schema_migrations` table (if required), checks the latest version, and applies outstanding migrations. Legacy `invoices` tables missing the modern columns are renamed to `invoices_legacy` before the current schema is created so historical data is preserved for manual review.

@@ -6,6 +6,7 @@
 - [x] Load existing encrypted credentials and paths directly in the Qt frontend.
 - [x] Automate Amazon Business invoice retrieval with Selenium and optional headless mode.
 - [x] Parse downloaded PDFs to capture totals and payment references for database storage.
+- [x] Persist extrahierte Produktnamen aus Rechnungs-PDFs, damit die Datenbank nach Artikelbezeichnungen durchsucht werden kann.
 - [x] Display downloaded invoices in a searchable table with running total.
 - [x] Reload worker environment configuration on every run so GUI updates take effect immediately.
 - [x] Harden amount parsing with locale-aware normalization and doctest coverage for German and English formats.
