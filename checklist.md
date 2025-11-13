@@ -14,6 +14,7 @@
 - [x] Resolve user-supplied paths like `~/Downloads` and create missing directories before the worker connects to SQLite or writes invoices.
 - [x] Close the GUI usability gaps by enabling table sorting, persisting the log history, localising totals, hardening amount parsing, and deduplicating invoice downloads.
 - [x] Document the database schema and add versioned migrations that preserve legacy invoice data.
+- [x] Parse and persist invoice dates, backfill existing entries, and surface the actual Rechnungsdatum in the GUI.
 ## 🔄 In Progress / Planned
 - [ ] Provide packaged application binaries for Windows/macOS/Linux users.
 - [ ] Add automated tests or CI pipeline to catch regressions in GUI and worker logic.

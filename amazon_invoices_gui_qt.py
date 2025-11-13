@@ -5,6 +5,7 @@ import hashlib
 import threading
 import sqlite3
 import logging
+from datetime import datetime
 import resources_rc
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -108,16 +109,36 @@ def load_invoices_from_db(db_path, search_term=None):
     try:
         with sqlite3.connect(expanded_path) as conn:
             cur = conn.cursor()
-            query = (
-                "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
-                "FROM invoices"
-            )
+            cur.execute("PRAGMA table_info(invoices)")
+            columns = {row[1] for row in cur.fetchall()}
+            has_invoice_date = "invoice_date" in columns
+            if has_invoice_date:
+                query = (
+                    "SELECT invoice_id, filename, amount, currency, payment_ref, "
+                    "COALESCE(invoice_date, downloaded_at) AS display_date "
+                    "FROM invoices"
+                )
+            else:
+                query = (
+                    "SELECT invoice_id, filename, amount, currency, payment_ref, downloaded_at "
+                    "FROM invoices"
+                )
             params = ()
             if search_term:
-                query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
                 like = f"%{search_term}%"
-                params = (like, like, like)
-            query += " ORDER BY downloaded_at DESC"
+                if has_invoice_date:
+                    query += (
+                        " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+                        " OR invoice_date LIKE ?"
+                    )
+                    params = (like, like, like, like)
+                else:
+                    query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+                    params = (like, like, like)
+            if has_invoice_date:
+                query += " ORDER BY COALESCE(invoice_date, downloaded_at) DESC, downloaded_at DESC"
+            else:
+                query += " ORDER BY downloaded_at DESC"
             cur.execute(query, params)
             rows = cur.fetchall()
             return rows
@@ -132,12 +153,22 @@ def sum_amounts_from_db(db_path, search_term=None):
     try:
         with sqlite3.connect(expanded_path) as conn:
             cur = conn.cursor()
+            cur.execute("PRAGMA table_info(invoices)")
+            columns = {row[1] for row in cur.fetchall()}
+            has_invoice_date = "invoice_date" in columns
             query = "SELECT SUM(amount) FROM invoices"
             params = ()
             if search_term:
-                query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
                 like = f"%{search_term}%"
-                params = (like, like, like)
+                if has_invoice_date:
+                    query += (
+                        " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+                        " OR invoice_date LIKE ?"
+                    )
+                    params = (like, like, like, like)
+                else:
+                    query += " WHERE invoice_id LIKE ? OR filename LIKE ? OR payment_ref LIKE ?"
+                    params = (like, like, like)
             cur.execute(query, params)
             result = cur.fetchone()
             return result[0] if result and result[0] else 0.0
@@ -301,6 +332,25 @@ class MainWindow(QWidget):
                     amount = float(value)
                     item.setData(Qt.EditRole, amount)
                     item.setText(format_decimal_de(amount))
+                elif col_idx == 5:
+                    iso_text = str(value)
+                    dt_obj = None
+                    try:
+                        dt_obj = datetime.fromisoformat(iso_text)
+                    except ValueError:
+                        try:
+                            dt_obj = datetime.fromisoformat(iso_text.split("T")[0])
+                        except ValueError:
+                            dt_obj = None
+                    if dt_obj:
+                        item.setData(Qt.EditRole, dt_obj)
+                        item.setText(dt_obj.strftime("%d.%m.%Y"))
+                        if "T" in iso_text:
+                            item.setToolTip(
+                                f"Rechnungsdatum fehlte – Downloadzeit verwendet ({iso_text})."
+                            )
+                    else:
+                        item.setText(iso_text)
                 else:
                     item.setText(str(value))
                 self.table.setItem(row_idx, col_idx, item)
